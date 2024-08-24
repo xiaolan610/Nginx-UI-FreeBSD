@@ -1,0 +1,76 @@
+name: 在FreeBSD上同步、编译和发布
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '0 * * * *' # 每小时运行一次
+
+jobs:
+  sync-build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v3
+
+      - name: 在VM上安装FreeBSD
+        uses: vmactions/freebsd-vm@v0.1.0
+        with:
+          freebsd-version: 13.1-RELEASE
+          vm-name: freebsd-build-vm
+
+      - name: 克隆远程仓库到FreeBSD VM
+        run: |
+          ssh freebsd@localhost "git clone https://github.com/0xJacky/nginx-ui.git /path/to/project"
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+
+      - name: 在FreeBSD VM上同步代码
+        run: |
+          ssh freebsd@localhost "cd /path/to/project && git pull"
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+      
+      - name: 比较更新
+        id: compare
+        run: |
+          ssh freebsd@localhost "cd /path/to/project && git fetch && git diff --quiet origin/main"
+          echo "updated=$?" >> $GITHUB_ENV
+
+      - name: 生成版本号
+        if: env.updated == '1'
+        id: version
+        run: |
+          version=$(date +'%Y.%m.%d.%H%M')
+          echo "version=$version" >> $GITHUB_ENV
+
+      - name: 在FreeBSD VM上编译代码
+        if: env.updated == '1'
+        run: |
+          ssh freebsd@localhost <<EOF
+          cd /path/to/project
+          npx browserslist@latest --update-db
+          pnpm install
+          pnpm build
+          go build -tags=jsoniter -ldflags "\$LD_FLAGS -X 'github.com/0xJacky/nginx-ui/settings.buildTime=\$(date +%s)'" -o nginx-ui -v main.go
+          EOF
+        env:
+          LD_FLAGS: ${{ secrets.LD_FLAGS }}
+
+      - name: 创建GitHub Release
+        if: env.updated == '1'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }}
+          body: "自动生成的发布版"
+          files: /path/to/project/nginx-ui
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 推送到releases
+        if: env.updated == '1'
+        run: |
+          git tag -a v${{ steps.version.outputs.version }} -m "Release v${{ steps.version.outputs.version }}"
+          git push origin v${{ steps.version.outputs.version }}
