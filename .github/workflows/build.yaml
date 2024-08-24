@@ -13,13 +13,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
-        uses: actions/checkout@v3
+        uses: ./actions/checkout
 
-      - name: 在VM上安装FreeBSD
-        uses: vmactions/freebsd-vm@v0.1.0
+      - name: 准备 FreeBSD VM
+        uses: ./actions/freebsd-vm
         with:
-          freebsd-version: 13.1-RELEASE
-          vm-name: freebsd-build-vm
+          mem: 2G
+          nat: true
+          usesh: true
+
+      - name: 创建 SSH 配置
+        run: |
+          mkdir -p ~/.ssh
+          echo -e "Host freebsd\n  HostName localhost\n  User freebsd\n  StrictHostKeyChecking no" > ~/.ssh/config
 
       - name: 克隆远程仓库到FreeBSD VM
         run: |
@@ -61,7 +67,7 @@ jobs:
 
       - name: 创建GitHub Release
         if: env.updated == '1'
-        uses: softprops/action-gh-release@v1
+        uses: ./actions/gh-release
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: Release v${{ steps.version.outputs.version }}
